@@ -6,14 +6,16 @@ substitutions:
   name: hdmi-control-palakis-51cb94
   friendly_name: HDMI Control
   release_delay: 50ms
-
-  external_components:
-  - source:
-      type: local
-      path: my_components
-
+  
 packages:
   SMLIGHT.SLWF-08-HDMI: "github://smlight-tech/slwf-08/esphome-configs/slwf-08-Palakis.yaml"
+external_components:
+  - source:
+      type: git
+      url: https://github.com/jonathannpayne/esphome-native-hdmi-cec
+      ref: main
+    components: [hdmi_cec]
+  
 
 esphome:
   name: ${name}
