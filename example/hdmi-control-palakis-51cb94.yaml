@@ -1,6 +1,6 @@
 api:
   encryption:
-    key: "56U2czKK0RIWWoEV9i6itl1E1pERqLzOezB7ye81CrA="
+    key: !secret encryption_key
 
 substitutions:
   name: hdmi-control-palakis-51cb94
