@@ -1,0 +1,1098 @@
+api:
+  encryption:
+    key: "56U2czKK0RIWWoEV9i6itl1E1pERqLzOezB7ye81CrA="
+
+substitutions:
+  name: hdmi-control-palakis-51cb94
+  friendly_name: HDMI Control
+  release_delay: 50ms
+
+  external_components:
+  - source:
+      type: local
+      path: my_components
+
+packages:
+  SMLIGHT.SLWF-08-HDMI: "github://smlight-tech/slwf-08/esphome-configs/slwf-08-Palakis.yaml"
+
+esphome:
+  name: ${name}
+  name_add_mac_suffix: false
+  friendly_name: ${friendly_name}
+
+globals:
+  # =========================
+  # PLAYBACK DEVICE 1
+  # =========================
+  - id: device1_logical
+    type: uint8_t
+    restore_value: no
+    initial_value: '0xFF'
+
+  - id: device1_physical
+    type: uint16_t
+    restore_value: no
+    initial_value: '0xFFFF'
+
+  - id: device1_vendor
+    type: uint32_t
+    restore_value: no
+    initial_value: '0x000000'
+
+  - id: detect_physical_logical
+    type: uint8_t
+    restore_value: no
+    initial_value: '0xFF'
+
+  - id: detect_physical
+    type: uint16_t
+    restore_value: no
+    initial_value: '0xFFFF'
+
+  # Pending CEC device detections
+  # Allows up to three devices to announce themselves
+  # at the same time without overwriting each other.
+
+  - id: pending1_logical
+    type: uint8_t
+    restore_value: no
+    initial_value: '0xFF'
+
+  - id: pending1_vendor
+    type: uint32_t
+    restore_value: no
+    initial_value: '0x000000'
+
+  - id: pending2_logical
+    type: uint8_t
+    restore_value: no
+    initial_value: '0xFF'
+
+  - id: pending2_vendor
+    type: uint32_t
+    restore_value: no
+    initial_value: '0x000000'
+
+  - id: pending3_logical
+    type: uint8_t
+    restore_value: no
+    initial_value: '0xFF'
+
+  - id: pending3_vendor
+    type: uint32_t
+    restore_value: no
+    initial_value: '0x000000'
+
+  - id: device1_name
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+ 
+  # =========================
+  # PLAYBACK DEVICE 2
+  # =========================
+  - id: device2_logical
+    type: uint8_t
+    restore_value: no
+    initial_value: '0xFF'
+
+  - id: device2_physical
+    type: uint16_t
+    restore_value: no
+    initial_value: '0xFFFF'
+
+  - id: device2_vendor
+    type: uint32_t
+    restore_value: no
+    initial_value: '0x000000'
+
+  - id: device2_name
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  # =========================
+  # PLAYBACK DEVICE 3
+  # =========================
+  - id: device3_logical
+    type: uint8_t
+    restore_value: no
+    initial_value: '0xFF'
+
+  - id: device3_physical
+    type: uint16_t
+    restore_value: no
+    initial_value: '0xFFFF'
+
+  - id: device3_vendor
+    type: uint32_t
+    restore_value: no
+    initial_value: '0x000000'
+
+  - id: device3_name
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  # Temporary device being identified
+  - id: detect_logical
+    type: uint8_t
+    restore_value: no
+    initial_value: '0xFF'
+
+  - id: detect_vendor
+    type: uint32_t
+    restore_value: no
+    initial_value: '0x000000'
+
+  # Temporary compatibility globals.
+  # Existing Shield/TiVo buttons still use these.
+  # They will be removed when the buttons become generic.
+
+  - id: shield_address
+    type: uint8_t
+    restore_value: no
+    initial_value: '0xFF'
+
+  - id: shield_physical
+    type: uint16_t
+    restore_value: no
+    initial_value: '0xFFFF'
+
+  - id: tivo_address
+    type: uint8_t
+    restore_value: no
+    initial_value: '0xFF'
+
+  - id: tivo_physical
+    type: uint16_t
+    restore_value: no
+    initial_value: '0xFFFF'
+
+  - id: mqtt_cec_source
+    type: uint8_t
+    restore_value: no
+    initial_value: '5'
+
+  - id: mqtt_cec_destination
+    type: uint8_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: mqtt_cec_data
+    type: std::vector<uint8_t>
+    restore_value: no
+    initial_value: 'std::vector<uint8_t>()'
+
+# Shield CEC Detection Section
+# ============================================================
+# CEC DEVICE DETECTION
+#
+# IMPORTANT:
+#   The SLWF-08 itself remains CEC logical address 5.
+#   This code ONLY records the addresses of other devices.
+#
+# NVIDIA Shield vendor ID = 00044B
+#
+# 87 = Device Vendor ID
+# 84 = Report Physical Address
+#
+# TiVo detection will be added in the SAME lambda later.
+# ============================================================
+hdmi_cec:
+    promiscuous_mode: true
+    on_message:    
+
+      # =================================================
+      # MQTT - RAW RECEIVED CEC FRAME
+      # =================================================
+      - then:
+          - mqtt.publish:
+              topic: hdmi-control-palakis-51cb94/cec/received
+              qos: 0
+              retain: false
+              payload: !lambda |-
+                return hdmi_cec::Frame(source, destination, data).to_string(true);
+    
+      - then:
+          - lambda: |-
+              if (data.empty()) {
+                return;
+              }
+
+              const uint8_t opcode = data[0];
+              // =================================================
+              // MQTT - CEC STATUS / DECODED EVENT
+              // =================================================
+              {
+                std::string raw =
+                    hdmi_cec::Frame(source, destination, data).to_string(true);
+
+                char payload[512];
+
+                snprintf(
+                    payload,
+                    sizeof(payload),
+                    "{\"raw\":\"%s\",\"source\":%u,\"destination\":%u,\"opcode\":\"%02X\"}",
+                    raw.c_str(),
+                    source,
+                    destination,
+                    opcode);
+
+                id(publish_cec_status).execute(std::string(payload));
+              }              
+              // =================================================
+              // GIVE PHYSICAL ADDRESS
+              // =================================================
+              if (opcode == 0x83) {
+
+                ESP_LOGD("cec_detect",
+                         "Give Physical Address received from logical %X",
+                         source);
+
+                id(mqtt_cec_data).clear();
+                id(mqtt_cec_data).push_back(0x84);
+                id(mqtt_cec_data).push_back(0x00);
+                id(mqtt_cec_data).push_back(0x00);
+                id(mqtt_cec_data).push_back(0x05);
+
+                id(mqtt_cec_source) = 5;
+                id(mqtt_cec_destination) = 0x0F;
+
+                id(send_mqtt_cec).execute();
+
+                return;
+              }
+
+              // =================================================
+              // DEVICE VENDOR ID
+              // =================================================              
+
+              // =================================================
+              // DEVICE VENDOR ID
+              // =================================================
+              if (opcode == 0x87 && data.size() >= 4) {
+
+                uint32_t vendor =
+                    ((uint32_t)data[1] << 16) |
+                    ((uint32_t)data[2] << 8)  |
+                    (uint32_t)data[3];
+                // Ignore invalid/unavailable vendor ID.
+                if (vendor == 0xFFFFFF) {
+                  return;
+                }
+
+                ESP_LOGD("cec_detect",
+                         "CEC vendor response from logical %X: %06X",
+                         source,
+                         vendor);
+
+                // Ignore our own logical address.
+                if (source == 5) {
+                  return;
+                }
+
+                // -------------------------------------------------
+                // Ignore a vendor announcement from a device that
+                // is already known in one of our three slots.
+                //
+                // Identity here is vendor + logical address.
+                // We already know the physical address for these
+                // devices, so there is no reason to ask again.
+                // -------------------------------------------------
+                if ((id(device1_logical) == source &&
+                     id(device1_vendor) == vendor) ||
+                    (id(device2_logical) == source &&
+                     id(device2_vendor) == vendor) ||
+                    (id(device3_logical) == source &&
+                     id(device3_vendor) == vendor)) {
+                  return;
+                }
+
+                // -------------------------------------------------
+                // Ignore repeated vendor announcements while a
+                // device is currently being resolved.
+                // -------------------------------------------------
+                if (id(detect_logical) == source &&
+                    id(detect_vendor) == vendor) {
+                  return;
+                }
+
+                // -------------------------------------------------
+                // Remember this device independently of other
+                // devices that may announce themselves at the
+                // same time.
+                // -------------------------------------------------
+                if (id(pending1_logical) == source) {
+                  id(pending1_vendor) = vendor;
+                } else if (id(pending2_logical) == source) {
+                  id(pending2_vendor) = vendor;
+                } else if (id(pending3_logical) == source) {
+                  id(pending3_vendor) = vendor;
+                } else if (id(pending1_logical) == 0xFF) {
+                  id(pending1_logical) = source;
+                  id(pending1_vendor) = vendor;
+                } else if (id(pending2_logical) == 0xFF) {
+                  id(pending2_logical) = source;
+                  id(pending2_vendor) = vendor;
+                } else if (id(pending3_logical) == 0xFF) {
+                  id(pending3_logical) = source;
+                  id(pending3_vendor) = vendor;
+                }
+
+                // Keep the existing detector variables for
+                // compatibility with the current logic.
+                id(detect_logical) = source;
+                id(detect_vendor) = vendor;
+
+                // Ask the device for its physical address.
+                id(mqtt_cec_data).clear();
+                id(mqtt_cec_data).push_back(0x83);
+
+                id(mqtt_cec_source) = 5;
+                id(mqtt_cec_destination) = source;
+
+                id(send_mqtt_cec).execute();
+
+                return;
+
+               }
+
+              // =================================================
+              // REPORT PHYSICAL ADDRESS
+              // =================================================
+
+                if (opcode == 0x84 && data.size() >= 3) {
+
+                  uint16_t physical =
+                      ((uint16_t)data[1] << 8) |
+                      (uint16_t)data[2];
+
+                  // -------------------------------------------------
+                  // Remember the physical address.
+                  //
+                  // CEC devices do not always announce vendor ID and
+                  // physical address in the same order.
+                  // -------------------------------------------------
+                  id(detect_physical_logical) = source;
+                  id(detect_physical) = physical;
+
+                  // -------------------------------------------------
+                  // Find the vendor belonging to this logical address.
+                  //
+                  // The vendor and physical address may arrive in
+                  // either order, so use the pending device records.
+                  // -------------------------------------------------
+                  uint32_t vendor = 0x000000;
+
+                  if (id(pending1_logical) == source) {
+                    vendor = id(pending1_vendor);
+                  } else if (id(pending2_logical) == source) {
+                    vendor = id(pending2_vendor);
+                  } else if (id(pending3_logical) == source) {
+                    vendor = id(pending3_vendor);
+                  } else {
+                    return;
+                  }
+
+                  // -------------------------------------------------
+                  // Determine a friendly name.
+                  // -------------------------------------------------
+                  std::string device_name = "Playback Device";
+
+                  if (vendor == 0x00044B) {
+                    device_name = "NVIDIA Shield";
+                  } else if (vendor == 0x1CA410) {
+                    device_name = "TiVo";
+                  }
+
+                ESP_LOGI("cec_detect",
+                         "Playback device identified: %s, logical %X, physical %04X, vendor %06X",
+                         device_name.c_str(),
+                         source,
+                         physical,
+                         vendor);
+
+                // -------------------------------------------------
+                // Update existing device if already known.
+                //
+                // Identity = vendor + physical address.
+                // This prevents the logical B NVIDIA announcement
+                // from becoming a second Shield.
+                // -------------------------------------------------
+                int existing_slot = 0;
+
+                if (id(device1_logical) != 0xFF &&
+                    id(device1_vendor) == vendor &&
+                    id(device1_physical) == physical) {
+                  existing_slot = 1;
+                } else if (id(device2_logical) != 0xFF &&
+                           id(device2_vendor) == vendor &&
+                           id(device2_physical) == physical) {
+                  existing_slot = 2;
+                } else if (id(device3_logical) != 0xFF &&
+                           id(device3_vendor) == vendor &&
+                           id(device3_physical) == physical) {
+                  existing_slot = 3;
+                }
+
+                // -------------------------------------------------
+                // Existing device.
+                // Update its logical address in case it changed.
+                // -------------------------------------------------
+                if (existing_slot != 0) {
+
+                  if (existing_slot == 1) {
+                    id(device1_logical) = source;
+                    id(device1_physical) = physical;
+                    id(device1_vendor) = vendor;
+                    id(device1_name) = device_name;
+                  } else if (existing_slot == 2) {
+                    id(device2_logical) = source;
+                    id(device2_physical) = physical;
+                    id(device2_vendor) = vendor;
+                    id(device2_name) = device_name;
+                  } else {
+                    id(device3_logical) = source;
+                    id(device3_physical) = physical;
+                    id(device3_vendor) = vendor;
+                    id(device3_name) = device_name;
+                  }
+
+                  // Maintain the existing Shield/TiVo variables
+                  // for the current buttons.
+                  if (vendor == 0x00044B) {
+                    id(shield_address) = source;
+                    id(shield_physical) = physical;
+                  }
+
+                  if (vendor == 0x1CA410) {
+                    id(tivo_address) = source;
+                    id(tivo_physical) = physical;
+                  }
+
+                  id(detect_logical) = 0xFF;
+                  id(detect_vendor) = 0x000000;
+
+                  id(publish_playback_devices).execute();
+
+                  return;
+                }
+
+                // -------------------------------------------------
+                // New device.
+                //
+                // First available slot wins.
+                // -------------------------------------------------
+                if (id(device1_logical) == 0xFF) {
+
+                  id(device1_logical) = source;
+                  id(device1_physical) = physical;
+                  id(device1_vendor) = vendor;
+                  id(device1_name) = device_name;
+
+                  ESP_LOGI("cec_detect",
+                           "Added %s to playback device 1",
+                           device_name.c_str());
+
+                } else if (id(device2_logical) == 0xFF) {
+
+                  id(device2_logical) = source;
+                  id(device2_physical) = physical;
+                  id(device2_vendor) = vendor;
+                  id(device2_name) = device_name;
+
+                  ESP_LOGI("cec_detect",
+                           "Added %s to playback device 2",
+                           device_name.c_str());
+
+                } else if (id(device3_logical) == 0xFF) {
+
+                  id(device3_logical) = source;
+                  id(device3_physical) = physical;
+                  id(device3_vendor) = vendor;
+                  id(device3_name) = device_name;
+
+                  ESP_LOGI("cec_detect",
+                           "Added %s to playback device 3",
+                           device_name.c_str());
+
+                } else {
+
+                  ESP_LOGW("cec_detect",
+                           "Playback device table full; ignoring %s logical %X physical %04X",
+                           device_name.c_str(),
+                           source,
+                           physical);
+
+                  return;
+                }
+
+                // Maintain existing Shield/TiVo compatibility.
+                if (vendor == 0x00044B) {
+                  id(shield_address) = source;
+                  id(shield_physical) = physical;
+                }
+
+                if (vendor == 0x1CA410) {
+                  id(tivo_address) = source;
+                  id(tivo_physical) = physical;
+                }
+
+                id(detect_logical) = 0xFF;
+                id(detect_vendor) = 0x000000;
+
+                id(publish_playback_devices).execute();
+
+                return;
+              }
+
+              // =================================================
+              // ACTIVE SOURCE
+              //
+              // When a known playback device becomes active,
+              // move it to device1.
+              // =================================================
+              if (opcode == 0x82 && data.size() >= 3) {
+
+                uint16_t physical =
+                    ((uint16_t)data[1] << 8) |
+                    (uint16_t)data[2];
+
+                ESP_LOGI("cec_detect",
+                         "ACTIVE SOURCE physical=%04X | D1=%04X D2=%04X D3=%04X",
+                         physical,
+                         id(device1_physical),
+                         id(device2_physical),
+                         id(device3_physical));
+
+                // -------------------------------------------------
+                // Device 1 already active.
+                // -------------------------------------------------
+                if (id(device1_logical) != 0xFF &&
+                    id(device1_physical) == physical) {
+
+                  id(device1_logical) = source;
+
+                  return;
+                }
+
+                // -------------------------------------------------
+                // Device 2 becomes active.
+                // Move device 2 -> device 1.
+                // -------------------------------------------------
+                if (id(device2_logical) != 0xFF &&
+                    id(device2_physical) == physical) {
+
+                  uint8_t old_logical = id(device1_logical);
+                  uint16_t old_physical = id(device1_physical);
+                  uint32_t old_vendor = id(device1_vendor);
+                  std::string old_name = id(device1_name);
+
+                  id(device1_logical) = id(device2_logical);
+                  id(device1_physical) = id(device2_physical);
+                  id(device1_vendor) = id(device2_vendor);
+                  id(device1_name) = id(device2_name);
+
+                  id(device2_logical) = old_logical;
+                  id(device2_physical) = old_physical;
+                  id(device2_vendor) = old_vendor;
+                  id(device2_name) = old_name;
+
+                  ESP_LOGI("cec_detect",
+                           "Active playback device moved to slot 1: %s",
+                           id(device1_name).c_str());
+
+                  id(publish_playback_devices).execute();
+
+                  return;
+                }
+
+                // -------------------------------------------------
+                // Device 3 becomes active.
+                // Move device 3 -> device 1.
+                // Existing device 1 -> device 2.
+                // Existing device 2 -> device 3.
+                // -------------------------------------------------
+                if (id(device3_logical) != 0xFF &&
+                    id(device3_physical) == physical) {
+
+                  uint8_t old1_logical = id(device1_logical);
+                  uint16_t old1_physical = id(device1_physical);
+                  uint32_t old1_vendor = id(device1_vendor);
+                  std::string old1_name = id(device1_name);
+
+                  uint8_t old2_logical = id(device2_logical);
+                  uint16_t old2_physical = id(device2_physical);
+                  uint32_t old2_vendor = id(device2_vendor);
+                  std::string old2_name = id(device2_name);
+
+                  id(device1_logical) = id(device3_logical);
+                  id(device1_physical) = id(device3_physical);
+                  id(device1_vendor) = id(device3_vendor);
+                  id(device1_name) = id(device3_name);
+
+                  id(device2_logical) = old1_logical;
+                  id(device2_physical) = old1_physical;
+                  id(device2_vendor) = old1_vendor;
+                  id(device2_name) = old1_name;
+
+                  id(device3_logical) = old2_logical;
+                  id(device3_physical) = old2_physical;
+                  id(device3_vendor) = old2_vendor;
+                  id(device3_name) = old2_name;
+
+                  ESP_LOGI("cec_detect",
+                           "Active playback device moved to slot 1: %s",
+                           id(device1_name).c_str());
+
+                  id(publish_playback_devices).execute();
+
+                  return;
+                }
+              }
+script:
+
+  - id: publish_cec_status
+    parameters:
+      message: std::string
+    then:
+      - mqtt.publish:
+          topic: hdmi-control-palakis-51cb94/cec/status
+          qos: 0
+          retain: false
+          payload: !lambda |-
+            return message;
+
+  - id: send_mqtt_cec
+    then:
+      - hdmi_cec.send:
+          source: !lambda |-
+            return id(mqtt_cec_source);
+          destination: !lambda |-
+            return id(mqtt_cec_destination);
+          data: !lambda |-
+            return id(mqtt_cec_data);
+
+  - id: publish_playback_devices
+    then:
+      - mqtt.publish:
+            topic: hdmi-control-palakis-51cb94/cec/devices
+            retain: true
+            payload: !lambda |-
+              char buffer[900];
+              char d1[280];
+              char d2[280];
+              char d3[280];
+
+              if (id(device1_logical) == 0xFF) {
+                strcpy(d1, "null");
+              } else {
+                snprintf(
+                    d1, sizeof(d1),
+                    "{\"device\":\"%s\",\"logical\":%u,\"physical\":\"%04X\",\"hdmi\":%u,\"vendor\":\"%06X\"}",
+                    id(device1_name).c_str(),
+                    id(device1_logical),
+                    id(device1_physical),
+                    (id(device1_physical) >> 12) & 0x0F,
+                    id(device1_vendor));
+              }
+
+              if (id(device2_logical) == 0xFF) {
+                strcpy(d2, "null");
+              } else {
+                snprintf(
+                    d2, sizeof(d2),
+                    "{\"device\":\"%s\",\"logical\":%u,\"physical\":\"%04X\",\"hdmi\":%u,\"vendor\":\"%06X\"}",
+                    id(device2_name).c_str(),
+                    id(device2_logical),
+                    id(device2_physical),
+                    (id(device2_physical) >> 12) & 0x0F,
+                    id(device2_vendor));
+              }
+
+              if (id(device3_logical) == 0xFF) {
+                strcpy(d3, "null");
+              } else {
+                snprintf(
+                    d3, sizeof(d3),
+                    "{\"device\":\"%s\",\"logical\":%u,\"physical\":\"%04X\",\"hdmi\":%u,\"vendor\":\"%06X\"}",
+                    id(device3_name).c_str(),
+                    id(device3_logical),
+                    id(device3_physical),
+                    (id(device3_physical) >> 12) & 0x0F,
+                    id(device3_vendor));
+              }
+
+              snprintf(
+                  buffer, sizeof(buffer),
+                  "{\"device1\":%s,\"device2\":%s,\"device3\":%s}",
+                  d1, d2, d3);
+
+              return std::string(buffer);
+
+  - id: publish_shield_info
+    then:
+      - mqtt.publish:
+          topic: hdmi-control-palakis-51cb94/cec/shield
+          retain: true
+          payload: !lambda |-
+            char buffer[160];
+
+            snprintf(buffer, sizeof(buffer),
+                     "{\"device\":\"NVIDIA Shield\",\"logical\":%u,\"physical\":\"%04X\",\"hdmi\":%u,\"vendor\":\"%06X\"}",
+                     id(shield_address),
+                     id(shield_physical),
+                     (id(shield_physical) >> 12) & 0x0F,
+                     0x00044B);
+
+            return std::string(buffer);
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+mqtt:
+  broker: !secret mqtt_broker
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+
+  on_message:
+    - topic: hdmi-control-palakis-51cb94/cec/send
+      then:
+        - lambda: |-
+            std::string payload = x;
+
+            // Clear previous command
+            id(mqtt_cec_data).clear();
+
+            // Find first colon - everything before it is destination
+            size_t colon = payload.find(':');
+
+            if (colon == std::string::npos) {
+              ESP_LOGW("mqtt_cec", "Invalid CEC command: %s", payload.c_str());
+              return;
+            }
+
+            // Parse destination as hexadecimal
+            std::string destination = payload.substr(0, colon);
+
+            uint8_t header =
+                static_cast<uint8_t>(
+                    strtoul(destination.c_str(), nullptr, 16));
+
+            id(mqtt_cec_source) = (header >> 4) & 0x0F;
+            id(mqtt_cec_destination) = header & 0x0F;
+
+            // Parse each subsequent byte
+            size_t start = colon + 1;
+
+            while (start < payload.length()) {
+              size_t next = payload.find(':', start);
+
+              std::string byte_string;
+
+              if (next == std::string::npos) {
+                byte_string = payload.substr(start);
+              } else {
+                byte_string = payload.substr(start, next - start);
+              }
+
+              if (!byte_string.empty()) {
+                id(mqtt_cec_data).push_back(
+                    static_cast<uint8_t>(
+                        strtoul(byte_string.c_str(), nullptr, 16)));
+              }
+
+              if (next == std::string::npos) {
+                break;
+              }
+
+              start = next + 1;
+            }
+
+            if (id(mqtt_cec_data).empty()) {
+              ESP_LOGW("mqtt_cec", "No CEC data in command: %s", payload.c_str());
+              return;
+            }
+
+            ESP_LOGD("mqtt_cec", "MQTT CEC command: %s", payload.c_str());
+
+        - script.execute: send_mqtt_cec
+
+button:
+  # =========================
+  # PLAYBACK DEVICE CONTROLS
+  # Generic destination
+  # Source = 5 (SLWF-08)
+  # =========================
+
+  - platform: template
+    name: "01 - Root Menu"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x09]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "02 - Up"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x01]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "03 - Down"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x02]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "04 - Left"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x03]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "05 - Right"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x04]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "06 - Select"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x00]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "07 - Exit"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x0D]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  # =========================
+  # MEDIA CONTROLS
+  # =========================
+
+  - platform: template
+    name: "08 - Forward"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x4B]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "09 - Backward"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x4C]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "10 - Play"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x44]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "11 - Stop"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x45]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "12 - Pause"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x46]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "13 - Rewind"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x48]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "14 - Fast forward"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x49]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  # =========================
+  # POWER / VOLUME
+  # =========================
+
+  - platform: template
+    name: "15 - Power"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x40]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "16 - Volume Up"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x41]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "17 - Volume Down"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x42]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  - platform: template
+    name: "18 - Mute"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x44, 0x43]
+      - delay: ${release_delay}
+      - hdmi_cec.send:
+          source: 0x05
+          destination: !lambda return id(device1_logical);
+          data: [0x45]
+
+  # =========================
+  # NEC MONITOR HDMI INPUTS
+  # =========================
+
+  - platform: template
+    name: "19 - TV HDMI 1"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x0
+          destination: 0xF
+          data: [0x80, 0x10, 0x00, 0x10, 0x00]
+
+  - platform: template
+    name: "20 - TV HDMI 2"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x0
+          destination: 0xF
+          data: [0x80, 0x10, 0x00, 0x20, 0x00]
+
+  - platform: template
+    name: "21 - TV HDMI 3"
+    on_press:
+      - hdmi_cec.send:
+          source: 0x0
+          destination: 0xF
+          data: [0x80, 0x10, 0x00, 0x30, 0x00]
