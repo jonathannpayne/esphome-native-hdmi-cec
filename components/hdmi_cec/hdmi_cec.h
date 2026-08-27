@@ -86,6 +86,7 @@ class FrameRingBuffer {
 };
 
 class MessageTrigger;
+class SendTrigger;
 
 class HDMICEC : public Component {
 public:
@@ -97,6 +98,7 @@ public:
   void set_monitor_mode(bool monitor_mode) { monitor_mode_ = monitor_mode; }
   void set_osd_name_bytes(const std::vector<uint8_t> &osd_name_bytes) { osd_name_bytes_ = osd_name_bytes; }
   void add_message_trigger(MessageTrigger *trigger) { message_triggers_.push_back(trigger); }
+  void add_send_trigger(SendTrigger *trigger) { send_triggers_.push_back(trigger); }
 
   bool send(uint8_t source, uint8_t destination, const std::vector<uint8_t> &data_bytes);
 
@@ -126,6 +128,7 @@ protected:
   bool monitor_mode_;
   std::vector<uint8_t> osd_name_bytes_;
   std::vector<MessageTrigger*> message_triggers_;
+  std::vector<SendTrigger*> send_triggers_;
 
   bool last_level_ = true;            // cec line level on last isr call
   volatile uint32_t last_falling_edge_us_ = 0; // timepoint in received message (volatile: written by ISR, read by send())
@@ -154,6 +157,13 @@ protected:
   optional<uint8_t> destination_;
   optional<uint8_t> opcode_;
   optional<std::vector<uint8_t>> data_;
+};
+
+class SendTrigger : public Trigger<std::vector<uint8_t>> {
+  friend class HDMICEC;
+
+ public:
+  explicit SendTrigger(HDMICEC *parent) { parent->add_send_trigger(this); }
 };
 
 template<typename... Ts> class SendAction : public Action<Ts...> {

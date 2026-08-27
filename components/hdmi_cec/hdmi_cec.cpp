@@ -249,7 +249,16 @@ bool HDMICEC::send(uint8_t source, uint8_t destination, const std::vector<uint8_
     const uint32_t send_start_us = micros();
 
     for (size_t i = 0; i < MAX_ATTEMPTS; i++) {
-      int32_t delay = 0;
+	  int32_t delay = 0;
+
+	  ESP_LOGD(TAG,
+			   "SEND STATE: last_sent=%u last_falling=%u now=%u free=%u",
+			   last_sent_us_,
+			   (uint32_t) last_falling_edge_us_,
+			   micros(),
+			   free_bit_periods);
+      ESP_LOGD(TAG, "BUS DEBUG: last_sent=%u last_falling=%u now=%u",
+               last_sent_us_, last_falling_edge_us_, micros());
       // Per-attempt timeout for bus-free wait: 200ms max per attempt
       const uint32_t attempt_start_us = micros();
       static const uint32_t ATTEMPT_TIMEOUT_US = 200000;
@@ -286,10 +295,19 @@ bool HDMICEC::send(uint8_t source, uint8_t destination, const std::vector<uint8_
       ESP_LOGV(TAG, "HDMICEC::send(): bus available, sending frame...");
 
       auto result = send_frame_(frame, is_broadcast);
-      if (result == SendResult::Success) {
-        ESP_LOGD(TAG, "frame sent and acknowledged");
-        return true;
-      }
+
+	 if (result == SendResult::Success) {
+       ESP_LOGD(TAG, "frame sent and acknowledged");
+
+       for (auto *trigger : send_triggers_) {
+         trigger->trigger(frame);
+       }
+
+       return true;
+    }
+	  
+	  
+	  
       ESP_LOGI(TAG, "HDMICEC::send(): frame not sent: %s",
                ((result == SendResult::BusCollision) ? "Bus Collision" : "No Ack received"));
       // attempt retransmission with smaller free time gap
