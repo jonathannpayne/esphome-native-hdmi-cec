@@ -242,7 +242,52 @@ hdmi_cec:
                     opcode);
 
                 id(publish_cec_status).execute(std::string(payload));
-              }              
+              }
+
+              // Ask a device for its self-reported OSD name (e.g. "Tivo OS
+              // Box"), used to replace the generic "Playback Device" name
+              // once <Set OSD Name> (0x47) comes back.
+              auto request_osd_name = [](uint8_t destination_logical) {
+                id(mqtt_cec_data).clear();
+                id(mqtt_cec_data).push_back(0x46);
+                id(mqtt_cec_source) = 5;
+                id(mqtt_cec_destination) = destination_logical;
+                id(send_mqtt_cec).execute();
+              };
+
+              // =================================================
+              // SET OSD NAME
+              // =================================================
+              if (opcode == 0x47 && data.size() >= 2) {
+
+                std::string osd_name(data.begin() + 1, data.end());
+                if (osd_name.size() > 14) {
+                  osd_name = osd_name.substr(0, 14);
+                }
+
+                ESP_LOGI("cec_detect",
+                         "Set OSD Name from logical %X: %s",
+                         source,
+                         osd_name.c_str());
+
+                bool updated = true;
+                if (id(device1_logical) == source) {
+                  id(device1_name) = osd_name;
+                } else if (id(device2_logical) == source) {
+                  id(device2_name) = osd_name;
+                } else if (id(device3_logical) == source) {
+                  id(device3_name) = osd_name;
+                } else {
+                  updated = false;
+                }
+
+                if (updated) {
+                  id(publish_playback_devices).execute();
+                }
+
+                return;
+              }
+
               // =================================================
               // GIVE PHYSICAL ADDRESS
               // =================================================
@@ -279,9 +324,13 @@ hdmi_cec:
                     ((uint32_t)data[1] << 16) |
                     ((uint32_t)data[2] << 8)  |
                     (uint32_t)data[3];
-                // Ignore invalid/unavailable vendor ID.
+
+                // Some devices report FFFFFF while in standby. Still ask for their
+                // physical address so their logical/physical address can be refreshed.
                 if (vendor == 0xFFFFFF) {
-                  return;
+                  ESP_LOGD("cec_detect",
+                           "Unknown vendor ID from logical %X; requesting physical address",
+                           source);
                 }
 
                 ESP_LOGD("cec_detect",
@@ -476,6 +525,12 @@ hdmi_cec:
                   id(detect_logical) = 0xFF;
                   id(detect_vendor) = 0x000000;
 
+                  // The vendor lookup didn't give us a real name; ask the
+                  // device directly for its OSD name (e.g. "Tivo OS Box").
+                  if (device_name == "Playback Device") {
+                    request_osd_name(source);
+                  }
+
                   id(publish_playback_devices).execute();
 
                   return;
@@ -544,6 +599,12 @@ hdmi_cec:
                 id(detect_logical) = 0xFF;
                 id(detect_vendor) = 0x000000;
 
+                // The vendor lookup didn't give us a real name; ask the
+                // device directly for its OSD name (e.g. "Tivo OS Box").
+                if (device_name == "Playback Device") {
+                  request_osd_name(source);
+                }
+
                 id(publish_playback_devices).execute();
 
                 return;
@@ -567,6 +628,57 @@ hdmi_cec:
                          id(device1_physical),
                          id(device2_physical),
                          id(device3_physical));
+
+                // -------------------------------------------------
+                // A device that answers Request Active Source may
+                // not have answered Give Device Vendor ID. Add such
+                // a device generically, using only what CEC reported.
+                // -------------------------------------------------
+                const bool known_physical =
+                    (id(device1_logical) != 0xFF &&
+                     id(device1_physical) == physical) ||
+                    (id(device2_logical) != 0xFF &&
+                     id(device2_physical) == physical) ||
+                    (id(device3_logical) != 0xFF &&
+                     id(device3_physical) == physical);
+
+                if (!known_physical) {
+                  if (id(device1_logical) == 0xFF) {
+                    id(device1_logical) = source;
+                    id(device1_physical) = physical;
+                    id(device1_vendor) = 0x000000;
+                    id(device1_name) = "Playback Device";
+
+                    ESP_LOGI("cec_detect",
+                             "Added active playback device to slot 1: logical %X, physical %04X",
+                             source,
+                             physical);
+
+                    request_osd_name(source);
+                    id(publish_playback_devices).execute();
+                    return;
+                  }
+
+                  if (id(device2_logical) == 0xFF) {
+                    id(device2_logical) = source;
+                    id(device2_physical) = physical;
+                    id(device2_vendor) = 0x000000;
+                    id(device2_name) = "Playback Device";
+                  } else if (id(device3_logical) == 0xFF) {
+                    id(device3_logical) = source;
+                    id(device3_physical) = physical;
+                    id(device3_vendor) = 0x000000;
+                    id(device3_name) = "Playback Device";
+                  } else {
+                    ESP_LOGW("cec_detect",
+                             "Playback device table full; active device logical %X physical %04X was not added",
+                             source,
+                             physical);
+                    return;
+                  }
+
+                  request_osd_name(source);
+                }
 
                 // -------------------------------------------------
                 // Device 1 already active.
@@ -676,8 +788,103 @@ script:
           data: !lambda |-
             return id(mqtt_cec_data);
 
+  - id: device_discovery
+    mode: restart
+    then:
+      - lambda: |-
+          // Forget the previous discovery result.
+          id(device1_logical) = 0xFF;
+          id(device1_physical) = 0xFFFF;
+          id(device1_vendor) = 0x000000;
+          id(device1_name) = "";
+
+          id(device2_logical) = 0xFF;
+          id(device2_physical) = 0xFFFF;
+          id(device2_vendor) = 0x000000;
+          id(device2_name) = "";
+
+          id(device3_logical) = 0xFF;
+          id(device3_physical) = 0xFFFF;
+          id(device3_vendor) = 0x000000;
+          id(device3_name) = "";
+
+          id(pending1_logical) = 0xFF;
+          id(pending1_vendor) = 0x000000;
+          id(pending2_logical) = 0xFF;
+          id(pending2_vendor) = 0x000000;
+          id(pending3_logical) = 0xFF;
+          id(pending3_vendor) = 0x000000;
+
+          id(detect_logical) = 0xFF;
+          id(detect_vendor) = 0x000000;
+          id(detect_physical_logical) = 0xFF;
+          id(detect_physical) = 0xFFFF;
+
+          id(shield_address) = 0xFF;
+          id(shield_physical) = 0xFFFF;
+          id(tivo_address) = 0xFF;
+          id(tivo_physical) = 0xFFFF;
+      - script.execute: publish_playback_devices
+      - lambda: |-
+          // Ask every CEC device to identify itself.
+          id(mqtt_cec_source) = 0x05;
+          id(mqtt_cec_destination) = 0x0F;
+          id(mqtt_cec_data).clear();
+          id(mqtt_cec_data).push_back(0x8C);
+      - script.execute: send_mqtt_cec
+      - delay: 500ms
+      - lambda: |-
+          // Some devices answer Active Source but not Vendor ID.
+          id(mqtt_cec_source) = 0x05;
+          id(mqtt_cec_destination) = 0x0F;
+          id(mqtt_cec_data).clear();
+          id(mqtt_cec_data).push_back(0x85);
+      - script.execute: send_mqtt_cec
+
   - id: publish_playback_devices
     then:
+      - lambda: |-
+          // Update the single combined "attached device" status row,
+          // covering all three TV HDMI inputs, derived from whichever
+          // tracked device slot (if any) currently reports a physical
+          // address on that port.
+          auto device_on_port = [](uint8_t port) -> std::string {
+            if (id(device1_logical) != 0xFF &&
+                ((id(device1_physical) >> 12) & 0x0F) == port) {
+              return id(device1_name);
+            }
+            if (id(device2_logical) != 0xFF &&
+                ((id(device2_physical) >> 12) & 0x0F) == port) {
+              return id(device2_name);
+            }
+            if (id(device3_logical) != 0xFF &&
+                ((id(device3_physical) >> 12) & 0x0F) == port) {
+              return id(device3_name);
+            }
+            return std::string("None");
+          };
+
+          // device1 is always the currently active device (the
+          // ACTIVE SOURCE handler promotes it to slot 1), so its port
+          // is the one to mark as active.
+          uint8_t active_port = 0;
+          if (id(device1_logical) != 0xFF) {
+            active_port = (id(device1_physical) >> 12) & 0x0F;
+          }
+
+          std::string d1 = device_on_port(1);
+          std::string d2 = device_on_port(2);
+          std::string d3 = device_on_port(3);
+
+          if (active_port == 1) d1 += " Active";
+          if (active_port == 2) d2 += " Active";
+          if (active_port == 3) d3 += " Active";
+
+          char status[300];
+          snprintf(status, sizeof(status), "1: %s | 2: %s | 3: %s",
+                   d1.c_str(), d2.c_str(), d3.c_str());
+
+          id(hdmi_devices_text_sensor).publish_state(status);
       - mqtt.publish:
             topic: hdmi-control-palakis-51cb94/cec/devices
             retain: true
@@ -760,6 +967,9 @@ mqtt:
   password: !secret mqtt_password
 
   on_message:
+    - topic: cec/discover
+      then:
+        - script.execute: device_discovery
     - topic: hdmi-control-palakis-51cb94/cec/send
       then:
         - lambda: |-
@@ -821,6 +1031,22 @@ mqtt:
             ESP_LOGD("mqtt_cec", "MQTT CEC command: %s", payload.c_str());
 
         - script.execute: send_mqtt_cec
+        
+    - topic: hdmi-control-palakis-51cb94/cec/discover
+      then:
+        - script.execute: device_discovery
+        
+text_sensor:
+  # =========================
+  # One combined status row for all three TV HDMI inputs, kept in
+  # sync with publish_playback_devices whenever device tracking
+  # changes. Single row instead of one sensor per port, since the
+  # device's own web UI shows every entity on its own line.
+  # =========================
+  - platform: template
+    id: hdmi_devices_text_sensor
+    name: "24 - TV HDMI Devices"
+    icon: mdi:hdmi-port
 
 button:
   # =========================
@@ -1098,3 +1324,17 @@ button:
           source: 0x0
           destination: 0xF
           data: [0x80, 0x10, 0x00, 0x30, 0x00]
+
+  - platform: template
+    name: "22 - Device Discovery"
+    on_press:
+      - script.execute: device_discovery
+
+  - platform: template
+    name: "23 - CEC Bus Reset"
+    on_press:
+      # Re-initializes the CEC GPIO/interrupt and receiver state in software,
+      # to recover from a stuck local CEC driver without a full ESP reboot.
+      - hdmi_cec.reset:
+      - delay: 200ms
+      - script.execute: device_discovery
