@@ -79,6 +79,33 @@ void HDMICEC::setup() {
   set_pin_input_high();
 }
 
+void HDMICEC::reset() {
+  ESP_LOGI(TAG, "HDMICEC::reset(): resetting CEC bus/driver state");
+
+  LockGuard send_lock(send_mutex_);
+
+  pin_->detach_interrupt();
+
+  // Drop any frames queued for the main loop and any in-progress receive.
+  frames_queue_.reset();
+  frame_receive_ = nullptr;
+
+  // Reset the receiver state machine and ISR bookkeeping, same as at setup().
+  receiver_state_ = ReceiverState::Idle;
+  recv_bit_counter_ = 0;
+  recv_byte_buffer_ = 0;
+  recv_ack_queued_ = false;
+  last_level_ = true;
+  last_falling_edge_us_ = 0;
+  last_sent_us_ = 0;
+
+  // Release the bus line and reattach the interrupt, mirroring setup().
+  set_pin_input_high();
+  pin_->attach_interrupt(HDMICEC::gpio_intr_, this, gpio::INTERRUPT_ANY_EDGE);
+
+  ESP_LOGI(TAG, "HDMICEC::reset(): done");
+}
+
 void HDMICEC::dump_config() {
   ESP_LOGCONFIG(TAG, "HDMI-CEC");
   LOG_PIN("  pin: ", pin_);

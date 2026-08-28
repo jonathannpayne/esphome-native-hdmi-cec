@@ -54,6 +54,9 @@ MessageTrigger = hdmi_cec_ns.class_(
 SendAction = hdmi_cec_ns.class_(
     "SendAction", automation.Action
 )
+ResetAction = hdmi_cec_ns.class_(
+    "ResetAction", automation.Action
+)
 
 CONFIG_SCHEMA = cv.COMPONENT_SCHEMA.extend(
     {
@@ -152,4 +155,16 @@ async def send_action_to_code(config, action_id, template_args, args):
     data_template_ = await cg.templatable(config.get(CONF_DATA), args, data_vec_, data_vec_)
     cg.add(var.set_data(data_template_))
 
+    return var
+
+@automation.register_action(
+    "hdmi_cec.reset",
+    ResetAction,
+    {
+        cv.GenerateID(CONF_PARENT): cv.use_id(HDMICEC),
+    }
+)
+async def reset_action_to_code(config, action_id, template_args, args):
+    parent = await cg.get_variable(config[CONF_PARENT])
+    var = cg.new_Pvariable(action_id, template_args, parent)
     return var

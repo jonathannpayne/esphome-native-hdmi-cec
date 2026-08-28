@@ -102,6 +102,11 @@ public:
 
   bool send(uint8_t source, uint8_t destination, const std::vector<uint8_t> &data_bytes);
 
+  // Re-initializes the CEC GPIO/interrupt and receiver state without a device reboot.
+  // Recovers from a stuck local CEC driver state (bus line held/mis-tracked) the same
+  // way a power-cycle does, without dropping WiFi/API/MQTT.
+  void reset();
+
   // Component overrides
   float get_setup_priority() { return esphome::setup_priority::HARDWARE; }
   void setup() override;
@@ -178,6 +183,18 @@ public:
     auto destination_address = destination_.value(x...);
     auto data = data_.value(x...);
     parent_->send(source_address, destination_address, data);
+  }
+
+protected:
+  HDMICEC *parent_;
+};
+
+template<typename... Ts> class ResetAction : public Action<Ts...> {
+public:
+  ResetAction(HDMICEC *parent) : parent_(parent) {}
+
+  void play(const Ts&... x) override {
+    parent_->reset();
   }
 
 protected:
