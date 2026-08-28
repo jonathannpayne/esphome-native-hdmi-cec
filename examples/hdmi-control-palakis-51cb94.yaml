@@ -1035,7 +1035,19 @@ mqtt:
     - topic: hdmi-control-palakis-51cb94/cec/discover
       then:
         - script.execute: device_discovery
-        
+
+    - topic: cec/reset
+      then:
+        # Matches button 23 - CEC Bus Reset exactly.
+        - hdmi_cec.reset:
+        - delay: 200ms
+        - script.execute: device_discovery
+    - topic: hdmi-control-palakis-51cb94/cec/reset
+      then:
+        - hdmi_cec.reset:
+        - delay: 200ms
+        - script.execute: device_discovery
+
 text_sensor:
   # =========================
   # One combined status row for all three TV HDMI inputs, kept in
